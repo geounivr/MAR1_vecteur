@@ -3,8 +3,10 @@ title: "Manipuler les vecteurs avec `R` et le package `sf`"
 subtitle: "GEO UNIV'R Tunisie 2024"
 date: "`r Sys.Date()`"
 author: "Elina Marveaux, Nicolas Lambert, Ronan Ysebaert"
+
 format:
   html:
+    output-file: index.html
     embed-resources: true
     theme: yeti
     smooth-scroll: true
