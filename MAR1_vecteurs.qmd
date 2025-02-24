@@ -1,0 +1,1226 @@
+---
+title: "Manipuler les vecteurs avec `R` et le package `sf`"
+subtitle: "GEO UNIV'R Tunisie 2024"
+date: "`r Sys.Date()`"
+author: "Elina Marveaux, Nicolas Lambert, Ronan Ysebaert"
+format:
+  html:
+    embed-resources: true
+    theme: yeti
+    smooth-scroll: true
+    fontsize: 0.9em
+    toc: true
+    toc-depth: 2
+    toc-title: "."
+    bibliography: [bib.bib]
+    css: custom.css
+    code-line-numbers: true
+execute:
+  warning: false
+  message: false  
+editor_options: 
+  chunk_output_type: console
+---
+
+![](img/header.png)
+
+::: callout-note
+Ce support est inspiré en de nombreux points du manuel [Géomatique avec
+R](https://rcarto.github.io/geomatique_avec_r/) (@giraud2024). Les
+exemples proposés sont tantôt adaptés aux contexte tunisien ou au
+contexte africain. On les en remercie chaleureusement 🙏
+:::
+
+<!-- #quarto-margin-sidebar { -->
+
+### Packages utilisés
+
+-   **`readxl`** : importer des fichiers Excel.
+-   **`sf`** : importer, manipuler et exporter des données géographiques
+    vectorielles.
+-   **`mapsf`** : cartographie thématique
+-   **`units`** : Manipuler les unités des objets R
+-   **`dplyr`** : Manipuler les données
+-   **`rmapshaper`** : simplifier des géométries
+-   **`terra`** : importer, manipuler et exporter des fichiers raster.
+
+    <!-- -   **`rnaturalearth`** : accéder à des fonds de carte du Monde. -->
+    <!-- - **`geodata`** : accéder à des jeux de données géographiques de référence dans le monde.  -->
+    <!-- - **`wbstats`** : utiliser les jeux de données de la Banque Mondiale via son API.  -->
+    <!-- - **`osmextract`** : télécharger des données OpenStreetMap. -->
+    <!-- - **`osrm`** : calculer des temps de parcours routiers via l'engin de routage OSRM.  -->
+
+Si vous n’avez pas ces packages, vous pouvez les installer en exécutant
+la ligne suivante dans la console.
+
+```{r installPackages}
+#| eval: false
+
+install.packages(c('readxl', 'sf', 'dplyr', 'units', 'rmapshaper', 'mapsf'))
+
+```
+
+<br>
+
+# Les formats vectoriels - *un retour rapide*
+
+Les données spatiales vectorielles correspondent à une géométrie qui
+peut être ponctuelle, linéaire ou zonale. Plusieurs formats de données
+géospatiales existent : shapefile (shp), GeoPackage (GPKG), GeoJSON
+(geojson), sqlite (sqlite), geodatabase d’ESRI (FileGDB), etc...
+
+Nous nous attardons rapidement ici aux deux formats utilisés dans cette
+école d'été, le shapefile (shp) et le GéoPackage (gpkg).
+
+## Le shapefile
+
+Le shapefile est un format de données spatiales vectorielles
+propriétaire édité par l'entreprise ESRI, il se présente comme une
+collection de fichiers portant le même nom avec les extensions et les
+usages suivants :
+
+-   `.shp` : stocke le format de la forme, sa géométrie
+-   `.dbf` : données attributaires relatives aux géométries du `.shp`
+    contenus dans le shapefile ;
+-   `.shx` : index de la géométrie.
+-   `.prj` : système de coordonnées au format WKT (well-known text)
+
+Chaque fichier doit porter le même nom et est indispensable au bon
+fonctionnement du shapefile.
+
+D'autres fichiers annexes peuvent aussi être fournis ou générés (indexes
+de formes, d'attributs, métadonnées au format xml...).
+
+## Le GeoPackage
+
+Le GeoPackage est un format de données spatiales vectorielles et raster
+non propriétaire et défini selon les standards de l'Open Geospatial
+Consortium (OGC). Il se comprend comme un fichier base de données qui
+peut contenir des objets vectoriels, les tuiles d'images, des données
+raster, des schémas de métadonnées comme ceux des normes INSPIRE.
+
+Hormis le format ouvert et l’interopérabilité, l'avantage du géopackage
+est qu'il peut se requêter comme une base de données avec du SQL dans
+QGIs, R ou ailleurs, et qu'il peut stocker dans un même fichier
+plusieurs couches raster ou vecteur. Cela facilite grandement
+l'organisation et la gestion de projets en géomatique.
+
+On peut par exemple organiser son travail autour du GeoPackage de
+différente façon :
+
+-   un géopagkage par projet
+-   un géopackage par echelle ou zone de travail (monde, tunisie)
+-   un géopagkage par type d'utilisation (géotraitements et versionnage
+    ou cartographie)
+
+La figure suivante illustre la différence d'organisation ou
+d'arborescence fichiers dans le cas d'utilisation de fichiers au format
+shapefile ou GéoPackage
+
+![](img/arbogpkg.png){width=60% fig-align="center"}
+
+# Le package `sf`
+
+::: {layout="[25,75]"}
+::: {first-column}
+![](img/sf.gif)
+:::
+
+::: {second-column}
+Le package `sf` [@pebesma2023a], publié en 2016 par Edzer Pebesma permet
+l’import, l’export, la manipulation et l’affichage de données spatiales
+vectorielles. Pour cela `sf` s’appuie sur une série de bibliothèques
+spatiales : GDAL (GDAL/OGR contributors, 2022), PROJ (PROJ contributors,
+2021) pour les opérations d’import, d’export et de projection, et GEOS
+(GEOS contributors, 2021) pour les opérations de géotraitement (buffer,
+intersection…). Ce package propose des objets simples (suivant le
+standard simple feature) dont la manipulation est assez aisée. Une
+attention particulière a été portée à la compatibilité du package avec
+la syntaxe pipe (\|\> ou %\>%) et les opérateurs du tidyverse (Wickham
+et al., 2019).
+:::
+:::
+
+## Anatomie d'un objet sf
+
+Un objet sf se présente comme un tableau de données `data.frame`, soit
+comme une table attributaire, à laquelle on ajoute une colonne *geom* ou
+*geometry* spécifique, de classe `sfc` (simple feature column) contenant
+les géométries (simple feature geometry). Chaque ligne, chaque individu
+est appelé simple feature.
+
+![](img/sfeature.png)
+
+Dans l’écosystème R, le `data.frame` est conçu comme une structure de
+vecteurs. Chaque colonne correspond à un vecteur et peut donc prendre
+tous les types que peuvent prendre des vecteurs (character, integer,
+numeric, boolean etc...). On peut donc effectuer sur les objets sf les
+même manipulations que l'on fait sur les vecteurs et tableaux dans R.
+
+La colonne contenant les géométries peut quant à elle prendre les types
+de géométrie traditionnels pris en charge par les
+[GeoJSON](https://www.rfc-editor.org/rfc/rfc7946) :
+
+| type                 | description                                                                                                                                                                                                                                       |
+|------------------|------------------------------------------------------|
+| `POINT`              | géométrie à zéro dimension contenant un seul point                                                                                                                                                                                                |
+| `LINESTRING`         | séquence de points reliés par des morceaux de lignes droites qui ne se coupent pas entre elles ; géométrie unidimensionnelle                                                                                                                      |
+| `POLYGON`            | Géométrie à aire positive (bidimensionnelle) ; une séquence de points forme un anneau fermé, non auto-intersecté ; le premier anneau désigne l'anneau extérieur, zéro ou plusieurs anneaux suivants désignent des trous dans cet anneau extérieur |
+| `MULTIPOINT`         | ensemble de points ; un MULTIPOINT est simple si aucun des points du MULTIPOINT n'est égal.                                                                                                                                                       |
+| `MULTILINESTRING`    | ensemble de `LINESTRING`                                                                                                                                                                                                                          |
+| `MULTIPOLYGON`       | ensemble de `POLYGON`                                                                                                                                                                                                                             |
+| `GEOMETRYCOLLECTION` | ensemble de géométries de tout type sauf `GEOMETRYCOLLECTION`                                                                                                                                                                                     |
+
+Cette colonne se prête aux géotraitements typiques d'un SIG comme le
+buffer, l'intersection ou l'agrégation.
+
+## Importer et Exporter des données spatiales vectorielles avec `sf`
+
+### Importer des données
+
+Chargement de la librairie
+
+```{r libSf}
+#| output: false
+
+library("sf")
+```
+
+La fonction `st_read()` de `sf` permet d'importer des formats de données
+géographiques variés (shapefile `.shp`, GeoPackage `.GPKG`, GeoJSON
+`.geojson` ...). Avant l'importation d'un fichier au format Geopackage
+il est préconnisé de consulter le contenu du fichier.
+
+Pour cela on utilise la fonction `st_layers()`
+
+```{r sfLayers}
+st_layers("data/tun/geom/tun_admin.gpkg")
+```
+
+<br>
+
+Cette fonction nous donne quelques résumés sur chacune des couches du
+GeoPackage. Le nom, le type de géométrie, le nombre d'individus, le
+nombre de champs, et le CRS, la projection de chaque couche.
+
+Nous pouvons à présent importer la couche "delegation" dans l'objet
+"del"
+
+```{r loadDel}
+del <- st_read(dsn = "data/tun/geom/tun_admin.gpkg", 
+               layer = "delegation")
+```
+
+## Exporter des données
+
+`sf` peut lire plusieurs formats géospatiaux et peut donc tout autant
+écrire ces formats à l'aide de la fonction `st_write()`.
+
+Cette fonction prend trois paramètres indispensables en entrée, l'objet
+à écrire `obj =`, son chemin d'écriture `dsn =`, la couche à
+écrire`layer =`.
+
+Pour l'exercice nous allons construire un GeoPackage de projet nommé
+`mar1Vector.gpkg`, dans lequel nous allons enregistrer notre couche
+`del`.
+
+```{r writeDel}
+#| eval: false
+
+st_write(obj = del, 
+         dsn = "data/mar1Vector.gpkg", 
+         layer = "delegation")
+```
+
+Remarquez qu'ici le chemin d'accès prend le nom complet du fichier et
+son extension. Ici le nom du GeoPackage et l'extension `.gpkg`. Si nous
+avions voulu exporter un GeoJSON, nous aurions écrit
+`dsn = delegation.geojson`
+
+Quelques paramètres additionnels sont utiles à connaître. Par exemple
+pour "écraser" ou remplacer une couche déja existante on utilise
+l'argument `delete_layer = TRUE`, lorsqu'il s'agit de remplacer le
+fichier `delete_dsn = TRUE`.
+
+```{r rewriteDel}
+#| eval: false
+
+st_write(obj = del, 
+         dsn = "data/mar1Vector.gpkg", 
+         layer = "delegation", 
+         delete_layer = TRUE)
+```
+
+::: {callout-tip}
+D'autres paramétrages sont possibles pour les autres types d'exports,
+pour cela référez-vous à la [vignette du
+package](https://r-spatial.github.io/sf/reference/st_write.html)
+:::
+
+# Premieres explorations
+
+## L'objet et la table attributaire (le `data.frame`)
+
+Puisque l'objet `sf` est un `data.frame`, on peut faire des opérations
+typiques telles que :
+
+`head()` pour en visualiser un extrait :
+
+```{r headDel}
+head(del)
+```
+
+`str()` pour connaitre le type ou la classe de chaque champ :
+
+```{r strDel}
+str(del)
+```
+
+<br>
+
+`colnames()` pour connaitre le nom chaque champ :
+
+```{r colnamesDel}
+colnames(del)
+```
+
+<br>
+
+ou `summary()` pour avoir un résumé statistique de chaque champ :
+
+```{r summaryDel}
+summary(del)
+```
+
+## Les géométries
+
+Pour connaitre le type de géométries on utilise la fonction `st_geometry_type()`. On peut rajouter l'argument `by_geometry = FALSE` pour avoir le type de l'ensemble. 
+
+```{r geomTypeDel}
+st_geometry_type(del, by_geometry = FALSE)
+```
+
+
+On peut aussi visualiser les géométries avec la fonction `plot()` native
+de R.
+
+Dans ce premier cas on obtient une carte par champs de la table
+attributaire
+
+```{r plotDel}
+plot(del)
+```
+
+Il existe deux façons de ne veut visualiser que les géométries
+
+::: {layout="[50, 50]"}
+::: {first-column}
+la fonction `st_geometry()` qui renvoi uniquement aux géométrie de
+l'objet sf
+
+`plot(st_geometry(del))`
+
+```{r stPlot}
+#| echo: false
+
+plot(st_geometry(del))
+```
+:::
+
+::: {second-column}
+ou on sélectionne le champs contenant les géométries
+
+`plot(del$geom)`
+
+```{r plotGeo}
+#| echo: false
+
+plot(del$geom)
+```
+:::
+:::
+
+::: callout-tip
+Pour plus de détail sur la cartographie avec le package sf voir le
+notebook de N. Lambert conçu pour l'école thématique : [Faire des cartes
+thématiques avec
+R](https://neocarto.github.io/geounivr2024/MAR_2_carto/index.html#cartographie-avec-sf){target="_blank"}
+:::
+
+# Les systèmes de coordonnées
+
+Pour connaître le détail du système de coordonnées de référence d'un
+objet `sf` on utilise la fonction `st_crs()`
+
+::: {.callout-note collapse="true"}
+## Détail de l'exéctution de la fonction st_crs()
+
+```{r crsDel}
+st_crs(del)
+```
+:::
+
+Ceci nous renvoi la définition complète du système de coordonnées selon
+les standards en WKT.
+
+Mais on peut aussi récupérer des informations spécifiques relatives à la
+projection. Pour cela on utilise l'argument `parameters = TRUE`.
+
+Il faut alors soit enregistrer le résultat de cette fonction dans un
+objet puis acceder aux paramètres via l'objet...
+
+```{r setCrsDel}
+crsDel <- st_crs(del, parameters = TRUE)
+```
+
+::: {.callout-note collapse="true"}
+## Détail de l'objet `crsDel`
+
+```{r readCrsDel}
+crsDel
+```
+:::
+
+... soit accéder aux paramètres directement en utilisant le `$`
+
+```{r getParametersCrs}
+# Directement depuis la fonction
+st_crs(del, parameters = TRUE)$Name
+```
+
+```{r getCrsId}
+# Depuis l'objet créé
+crsDel$srid
+```
+
+## Changer de projection
+
+La fonction `st_transform()` permet de changer la projection d'un objet
+`sf`. Il est possible de passer d'un système de coordonnées géodésique à
+un système de coordonnées projetées et inversement.
+
+Par exemple on peut reprojeter les délégations en dans le système de
+référence tunisien, Carthage - EPSG:2028.
+
+```{r setCrs2088}
+del2088 <- st_transform(del, crs = "EPSG:2088")
+
+st_crs(del2088, parameters = TRUE)$Name
+```
+
+Ou les reprojeter en WGS84 - World Geodetic System 1984
+
+```{r setCrs4326}
+del4326 <- st_transform(del, crs = "EPSG:4326")
+
+st_crs(del4326, parameters = TRUE)$Name
+```
+
+```{r visualizeCrsDiff}
+#| code-fold: true
+
+# Initalisation de la fenêtre graphique
+par(mfrow = c(1,3),
+    mar = c(0, 2, 5, 2),
+    xaxs='i', yaxs='i')
+
+# Afficher les délégations avec la projection initiale
+
+# On dessine les géométries dans leur projection d'origine
+plot(st_geometry(del), border = "lightblue", lwd = 2, col = NA,
+     graticule = TRUE)
+
+# On ajoute en titre le nom de la projection et les unités de mesure
+title(paste0(crsDel$Name, "\n", crsDel$units_gdal))
+
+
+# Carthage - EPSG:2088
+plot(st_geometry(del2088), border = "lightblue", lwd = 2, col = NA,
+     graticule = TRUE)
+
+title(paste0(st_crs(del2088, parameters = TRUE)$Name, "\n",
+             st_crs(del2088, parameters = TRUE)$units_gdal)
+     )
+
+
+# WGS84 EPSG:4326
+plot(st_geometry(del4326), border = "lightblue", lwd = 2, col = NA,
+     graticule = TRUE)
+
+title(paste0(st_crs(del4326, parameters = TRUE)$Name, "\n",
+             st_crs(del4326, parameters = TRUE)$units_gdal)
+     )
+```
+
+Pour conserver la projection adaptée à la tunisie on reprojete `del` en EPSG:2088
+
+```{r resetCrs2088}
+del <- st_transform(del, crs = "EPSG:2088")
+
+st_crs(del, parameters = TRUE)$Name
+```
+
+# Sélections et jointure attributaire
+
+## Sélectionner par attributs
+
+Comme les `data.frame` on peut sélectionner des lignes et des colonnes
+des objets `sf` en utilisant les crochets :
+
+`monSF[lignes , colonnes]`
+
+### Selectionner des lignes
+
+On peut donc afficher les 5 premières lignes de l'objet `del` grace à
+leur index
+
+```{r linesDel}
+del[1:5,]
+```
+
+On peut aussi les sélectionner en fonction d'une valeur de champ. Par
+exemple :
+
+```{r lineDelNames}
+del[del$del_nom_fr == "Sousse Medina", ]
+```
+
+### Selectionner des colonnes
+
+On peut sélectionner les colonnes par leur index, par exemple pour les
+dernières colonnes :
+
+```{r coslDels}
+del[, ncol(del)-5:ncol(del)]
+```
+
+On peut aussi les selectionner par leur nom
+
+```{r colsDelNames}
+del[, c("del_nom_fr", "gou_nom", "reg_nom")]
+```
+
+### Combiner les selections
+
+Enfin on peut combiner les selections
+
+```{r extractDelSousse}
+delSousse <- del[del$gou_nom %in% "Sousse", c("del_nom_fr", "gou_nom", "reg_nom")]
+
+delSousse
+```
+
+Et on peut afficher cette sélection
+
+```{r viewSousse}
+
+# Parametre de l'affichage
+par(mar = c(0, 0, 4, 0),  xaxs='i', yaxs='i', bg = "#F1F3F5")
+
+plot(st_geometry(delSousse), col = "#5B89A3", border = "white", lwd = 2)
+title(paste(unique(delSousse$gou_nom)))
+```
+
+## Jointure attributaire
+
+Avec la fonction `merge()` on peut joindre les données d'un autre
+`data.frame` à un objet `sf` et inversement via un champ de jointure
+commun.
+
+On importe d'autres données du projet
+
+```{r getDelAttributes}
+# Importer les fichiers locaux
+del_df <- read.csv("data/tun/don_del.csv", sep = ";", dec = ",")
+```
+
+On identifie le champ de jointure
+
+```{r linesDel2}
+del[1:2,]
+```
+
+```{r linesAttributes}
+del_df[1:2,]
+```
+
+Ici les deux colonnes identiques ont aussi le même nom. On choisi
+d'utiliser les codes pour la jointure :
+
+```{r delMerge}
+delMerge <- merge(x = del,
+                  y = del_df, 
+                  by.x = "del_code",
+                  by.y = "del_code",
+                  all.x = TRUE)
+```
+
+Attention, le sens de la jointure est important. Ici l'objet "x" est
+l'objet auquel on joint le second. L'objet final prend le type de
+l'objet x. Ici nous avons créé un nouvel objet `delMerge` qui résulte de
+la jointure de `del_def` à `del`. `del_merge`prend donc le type de
+`del`. C'est un objet`sf`.
+
+La ligne `all.x` signifie que l'on conserve tous les individus du
+tableau "x" meme si la correspondance est manquante dans le tableau "y".
+
+```{r headMerge}
+# Les deux objets ont bien été joints
+head(delMerge, 3)
+```
+
+# Sélections et jointure spatiale
+
+## Sélections spatiales
+
+Les sélections spatiales s'exécutent avec la fonction `st_filter()` et
+selon les prédicats géométriques suivants :
+
+-   `st_intersects()`
+-   `st_disjoint()`
+-   `st_touches()`
+-   `st_crosses()`
+-   `st_within()`
+-   `st_contains()`
+-   `st_contains_properly()`
+-   `st_overlaps()`
+-   `st_equals()`
+-   `st_covers()`
+-   `st_covered_by()`
+-   `st_equals_exact()`
+-   `st_is_within_distance()`
+
+::: callout-tip
+Voir la [vignette
+sf](https://r-spatial.github.io/sf/reference/geos_binary_pred.html)
+:::
+
+On importe les géométries extraites de OSM dans le module sur la
+Manipulation des données
+
+::: callout-tip
+Pour plus de détail sur l'extraction de données OSM voir le notebook de
+R. Ysebaert conçu pour l'école thématique : [Acquisition de données
+géographiques et visualisations de base](){target="_blank"}
+:::
+
+```{r readPoints}
+# Consulter le contenu du géopackage "tun_osm"
+st_layers("data/tun/geom/tun_osm.gpkg")
+
+# Charger les données ponctuelles
+poi <- st_read("data/tun/geom/tun_osm.gpkg", 
+               layer = "poi")
+
+# Extrait des données chargées
+head(poi)
+```
+
+Pour que la sélection spatiale fonctionne il faut s'assurer que les
+deux objets possèdent le meme système de coordonnées de référence
+
+```{r crsPoints}
+# Nom du SCR de "del"
+st_crs(del, parameters = TRUE)$srid
+
+# Nom du SCR de "poi"
+st_crs(poi, parameters = TRUE)$srid
+```
+
+Ici ils ne concordent pas donc :
+
+```{r setCrsPoints}
+# Re projection en 
+poi <- st_transform(poi, crs = "EPSG:2088")
+
+# Verification du SCR
+st_crs(poi, parameters = TRUE)$srid
+```
+
+On peut maintenant réaliser notre sélection spatiale. Ici on va
+sélectionner les points qui se trouvent dans l'objet `delSousse` que
+l'on a construit plus haut.
+
+```{r filterPoints}
+poiSousse <- st_filter(x = poi, 
+                       y = delSousse,
+                       .predicate = st_within)
+```
+
+On visualise le résultat
+
+```{r viewPoints}
+#| code-fold: true
+
+
+# Parametre de l'affichage
+par(mar = c(0, 0, 4, 0),  xaxs='i', yaxs='i', bg = "#F1F3F5")
+
+# Initialisation de la carte à l'emprise de Sousse
+plot(st_geometry(delSousse), col = NA, border = NA)
+
+# Fond de carte des délégations
+plot(st_geometry(del), col = "gray80", border = "white", lwd = 1, add = TRUE)
+
+# Délégations de Soussz
+plot(st_geometry(delSousse), col = "#5B89A3", border = "white", lwd = 2, add = TRUE)
+
+# Points remarquables de Souss
+plot(st_geometry(poiSousse), col = "red", border = "white", pch = 19, cex = .3, add = TRUE)
+
+# Titre
+title("Points remarquables \ndu Gouvernorat de Sousse")
+```
+
+# Opérations sur les géométries
+
+## Extraction de centroides {#sec-centro}
+
+La fonction `st_centroid()` permet d'extraire les centroides des polygones. 
+
+Ici on extrait les centroides des délégations de Sousse :
+
+```{r centroidSousse}
+delSousse_c <- st_centroid(delSousse)
+```
+
+```{r viewCentroSousse}
+# Parametre de l'affichage
+par(mar = c(0, 0, 0, 0),  xaxs='i', yaxs='i', bg = "#F1F3F5")
+
+# Délégations de Sousse
+plot(st_geometry(delSousse), col = "#5B89A3", border = "white")
+
+# Centroides des délégations de Sousse
+plot(st_geometry(delSousse_c), add = TRUE, pch = 20, col = "pink")
+```
+
+## Agrégation de polygones
+
+### Agrégation spatiale
+
+La fonction `st_union()` permet d'agréger des polygones entre eux. Par exemple pour reconstituer le gouvernorat de Sousse
+
+```{r unionSousse}
+gouSousse <- st_union(delSousse)
+```
+
+```{r viewUnionDelSousse}
+#| code-fold: true
+
+# Parametre de l'affichage
+par(mar = c(0, 0, 0, 0),  xaxs='i', yaxs='i', bg = "#F1F3F5")
+
+# Initialisation de la carte à l'emprise de Sousse
+plot(st_geometry(delSousse), col = NA, border = NA)
+
+# Fond de carte des délégations
+plot(st_geometry(del), col = "gray80", border = "white", lwd = 1, add = TRUE)
+
+# Délégations de Sousse
+plot(st_geometry(delSousse), col = "#5B89A3", border = "white", lwd = 1, add = TRUE)
+
+# Gouvernorat de Sousse
+plot(st_geometry(gouSousse), border = "darkblue", lwd = 3, add = TRUE)
+
+```
+
+### Agrégation spatiale et attributaire {#sec-agreg}
+
+On peut aussi agréger les polygones et demander un résumé statistique pour un ou plusieurs champ décrivant ces polygones. Plusieurs méthodes permettent de réaliser cet objectif. 
+
+La première méthode mobilise la fonction `aggregate()` de `sf`. Cette fonction permet d’agréger les polygones et de demander **le même résumé statistique** pour plusieurs champs.
+
+Dans cet exemple nous repartons de l'objet `delMerge` issu de la fusion entre les géométries des délégations et le tableau additionnel. L'objectif est de construire un objet `gou` représentant les gouvernorats et leur population. Pour y arriver, nous fusionnons toutes les délégations via le champ `gou_nom.x` et calculons la somme de la population pour chacun. 
+
+```{r aggragateSousse}
+gou <- aggregate(
+  x = delMerge[c("popto_2014", "immig_2014")], 
+  by = list(gou_nom = delMerge$gou_nom.x), 
+  FUN = sum
+)
+```
+
+```{r viewAggregate}
+#| code-fold: true
+
+# Parametre de l'affichage
+par(mar = c(0, 0, 0, 0),  xaxs='i', yaxs='i', bg = "#F1F3F5")
+
+# Fond de carte des délégations
+plot(st_geometry(del), col = "gray80", border = "white", lwd = 1)
+
+# Gouvernorats
+plot(st_geometry(gou), border = "#5B89A3", lwd = 2, add = TRUE)
+```
+
+
+Les fonctions `group_by()` et `summarise()` du package `dplyr` permettent d'agréger les polygones en demandant des résumés statistiques **différents** selon les champs. 
+
+```{r aggregateMerge}
+library(dplyr)
+
+gou <- delMerge |> 
+  group_by(gou_nom.x) |> 
+  summarise(pop = sum(popto_2014),
+            immig_mean = mean(immig_2014))
+```
+
+```{r linesGouv}
+gou[1:3, ]
+```
+
+ 
+## Construction d'une zone tampon (buffer)
+
+Pour construire la zone tampon il est préférable de connaître le SCR et
+l'unité de mesure de l'objet `sf`, par exemple avec cette fonction.
+
+```{r unitsGouv}
+st_crs(delSousse_c)$units
+```
+
+Les mesures sont exprimées en metres, on peut à présent utiliser la
+fonction `st_buffer()` pour construire la zone tampon.
+
+Ici on peut construire une zone tampon autour du centroide de la délégation de Sidi Bou Ali
+```{r selCentroSidiBou}
+# Sélection du centroide de Sidi Bou Ali 
+sidiBou_c <- delSousse_c[delSousse_c$del_nom_fr %in% "Sid Bou Ali", ]
+```
+
+Et on construit la zone tampon de 3000 m soit 5km
+```{r bufferSidibou}
+sidiBou_t <- st_buffer(sidiBou_c, dist = 5000)
+```
+
+```{r viewBufer}
+#| code-fold: true
+
+# Parametre de l'affichage
+par(mar = c(0, 0, 0, 0),  xaxs='i', yaxs='i', bg = "#F1F3F5")
+
+# Initialisation de la carte à l'emprise de Sousse
+plot(st_geometry(delSousse), col = NA, border = NA)
+
+# Fond de carte des délégations
+plot(st_geometry(del), col = "gray80", border = "white", lwd = 1, add = TRUE)
+
+# Délégations de Sousse
+plot(st_geometry(delSousse), col = "#5B89A3", border = "white", lwd = 1, add = TRUE)
+
+# Gouvernorat de Sousse
+plot(st_geometry(gouSousse), border = "darkblue", lwd = 3, add = TRUE)
+
+# Zone tampon de 5km autour du centroide de Sidi Bou Ali
+plot(st_geometry(sidiBou_t), border = "pink", col = "#fac0cb50", lwd = 2, add = TRUE)
+
+# Centroide de Sidi Bou Ali
+plot(st_geometry(sidiBou_c), col = "pink", pch = 20, cex = 2, add = TRUE)
+```
+
+## Intersection {#sec-inter}
+
+La fonction `st_intersection()` permet de découper une couche par une autre. 
+
+On peut ici par exemple, découper la couche `poi` des points remarquables, par le centroide de la délégation de Sidi Bou Ali. 
+
+
+```{r intersectPointsSidibou}
+poi_sidiBou <- st_intersection(x = sidiBou_t, y = poiSousse)
+```
+
+
+```{r viewIntersectSidibou}
+#| code-fold: true
+
+# Parametre de l'affichage
+par(mar = c(0, 0, 0, 0),  xaxs='i', yaxs='i', bg = "#F1F3F5")
+
+# Initialisation de la carte à l'emprise de Sousse
+plot(st_geometry(delSousse), col = NA, border = NA)
+
+# Fond de carte des délégations
+plot(st_geometry(del), col = "gray80", border = "white", lwd = 1, add = TRUE)
+
+# Délégations de Sousse
+plot(st_geometry(delSousse), col = "#5B89A3", border = "white", lwd = 1, add = TRUE)
+
+# Gouvernorat de Sousse
+plot(st_geometry(gouSousse), border = "darkblue", lwd = 3, add = TRUE)
+
+# Zone tampon de 5km autour du centroide de Sidi Bou Ali
+plot(st_geometry(sidiBou_t), border = "pink", col = "#fac0cb50", lwd = 2, add = TRUE)
+
+# Centroide de Sidi Bou Ali
+plot(st_geometry(sidiBou_c), col = "pink", pch = 20, cex = 2, add = TRUE)
+
+plot(st_geometry(poi_sidiBou), col = "red", border = "white", pch = 19, cex = .5, add = TRUE)
+```
+
+## Compter les points
+
+La fonction `st_intersects()` permet d'intersecter deux couches sans les découper, et de compter les éléments d'une couche (y) contenue dans une autre (x).
+
+L'argument `sparse = TRUE` nous permet de lister pour chaque élément de x les objets de y.
+
+
+```{r countsPointsSidibou}
+inter <- st_intersects(x = sidiBou_t, y = poi_sidiBou)
+
+inter
+```
+
+Le `1: ` signifie qu'il y a un objet, une 1 liste. Les chiffres suivants sont les identifiants de chacun des points. 
+
+Pour vérifier que le nombre d'intersection corresponde bien au nombre d'objets intersectés de x, ici il s'agit de `sidiBou_t` on fait : 
+
+```{r checkLenghts}
+length(inter) == nrow(sidiBou_t)
+```
+
+Pour compter le nombre de points intersectés par `sidiBou_t` on utilise la fonction `lengths()` qui renvoie la longueurs de chaque liste de l'intersection. 
+
+```{r viewLengths}
+lengths(inter)
+```
+
+On peut ajouter cette information à la table attributaire de sidiBou_t en créant un nouveau champ `nb_poi`
+```{r getLengths}
+sidiBou_t$nb_poi <- lengths(inter)
+```
+
+Sur la base de cet exemple on peut compter les points dans les gouvernorats créé dans la @sec-agreg
+
+```{r intersectsAllGou}
+interGou <- st_intersects(x = gou, y = poi)
+
+interGou
+
+# Le nombre d'intersections est-il égal aux objets de gou
+length(interGou) == nrow(gou)
+
+# combien y a t il de points par intersection
+lengths(interGou)
+
+# Ajout du nombre de points intersectés à l'objet gou
+gou$nb_poi <- lengths(interGou)
+```
+
+Et on peut cartographier ce résultat avec le package `mapSf` 
+
+```{r mapResults}
+library(mapsf)
+
+# intitialisation du fond de carte
+mf_map(x = gou, border = "white", lwd = 0.5)
+
+# cartographie du nombre de points en cercles proportionnels
+mf_map(x = gou,
+       var = "nb_poi",
+       type = "prop",
+       border = "white",
+       col = "#FF000080",
+       leg_title = "Nombre de points remarquables",
+       inches   = 0.4, leg_pos  = "topright")
+
+# Habillage
+mf_layout(title = "Equipements dans les gouvernorats", arrow = TRUE, scale = TRUE, credits = "GeoUnivR 2024 - Tunisie")
+```
+
+::: callout-tip
+Pour plus de détail sur la cartographie avec le package `mapsf` voir le
+notebook de N. Lambert conçu pour l'école thématique : [Faire des cartes
+thématiques avec
+R](https://neocarto.github.io/geounivr2024/MAR_2_carto/index.html#cartographie-avec-sf){target="_blank"}
+:::
+
+## Changer de type de géométrie
+
+Il est possible de convertir une géométrie en un autre type, par exemple convertir des géométries de type `POLYGON` à `LINESTRING`, avec la fonction `st_cast()` de `sf`.
+
+Pour connaitre le type de géométries
+```{r getGeomType}
+st_geometry_type(del, by_geometry = FALSE)
+```
+
+Ici on converti ces `MULTIPOLYGON` en `MULTILINESTRING`
+
+```{r changeGeomType}
+del_line <- st_cast(del, to = "MULTILINESTRING")
+```
+
+# Unités de mesures et calculs
+
+Les mesures sont possibles lorsque l'objet `sf` à des coordonnées
+projetées. La première étape est donc de vérifier le SCR de l'objet et
+son unité de mesure.
+
+## Unités de mesures
+
+On peut connaitre l'unité de mesure de la projection avec la fonction
+`st_crs()`
+
+::: {.callout-note collapse="true"}
+## Détail de `st_crs(del)`
+
+```{r detailCrs}
+st_crs(del)
+```
+:::
+
+Une méthode plus directe consiste à aller chercher précisément cette
+information dans ce que renvoie cette fonction :
+
+```{r getsCrsUnits}
+st_crs(del, parameters = TRUE)$units_gdal
+```
+
+## Calculs
+
+### Calcul de superficie
+
+Pour calculer la superficie on utilise la fonction `st_area()`. Elle
+renvoie une valeur dans l'unité de mesure de l'objet `sf`. Ici en metres
+carrés.
+
+```{r getArea}
+# Superficie des 5 premier-es délégations
+st_area(del[1:5, ])
+```
+
+On peut enregistrer cette information dans l'objet
+```{r addArea}
+del$area <- st_area(del)
+```
+
+### Calcul de longueur
+
+Le calcul de longueur ne s'applique qu'aux types `LINESTRING` et `MULTILINESTRING`. 
+
+```{r getLineLength}
+st_length(del_line[1:5, ])
+
+del_line$perimetre <- st_length(del_line)
+```
+
+### Calcul de distance {#sec-dist}
+
+On peut calculer la distance entre deux points avec la fonction
+`st_distance()`.
+
+Dans le cas d'objets géographiques de type `POLYGONS`, le calcul de
+distance s’effectue automatiquement entre leurs centroides. 
+
+Le résultat du calcul est une matrice de distance entre tous les points.
+
+```{r getDistance}
+st_distance(del[1:5, ])
+```
+
+Ici l'unité de mesure de la distance est le metre. On peut modifier
+cette unité grace au package `units` et de la fonction `set_units()`. Il
+ne s'agit pas ici de modifier l'unité de tout l'objet `sf` mais
+seulement des objets créés lors des calculs.
+
+Par exemple en reprenant notre calcul de distances en metres dans un
+nouvel objet :
+
+```{r saveDistances}
+distances <- st_distance(del[1:5, ])
+```
+
+On peut les convertir en kilometres (km)
+
+```{r packageUnits}
+# Chargement du package
+library(units)
+
+# Modification de l'unité
+set_units(x = distances, value = km)
+```
+
+Pour que le résultat soit conservé :
+
+```{r changeDistanceUnits}
+distances <- set_units(x = distances, value = km)
+```
+
+
+# Aller plus loin
+
+## Simplifier les géométries
+
+La fonction `st_simplify()` de `sf`permet de généraliser des géométries.
+
+```{r simplify1}
+del_simp_sf <- st_simplify(del, dTolerance = 5000, preserveTopology = TRUE)
+```
+
+Cett fonction n'est pas la plus éfficiace, on peut préférer utiliser la fonction `ms_simplify()` du package `rmapshaper` permet de généraliser ou simplifier les géométries en préservant la topologie.
+
+```{r packageMapshaper}
+library(rmapshaper)
+
+# simple généralisation des géométries
+del_simp_rmap <- ms_simplify(del)
+```
+
+On peut choisir la proportion de sommets à garder avec l'argument `keep = ...`, et forcer la conservation des formes avec `keep_shapes = TRUE` 
+```{r simpMapshaper}
+# Forte généralisation des géométries
+del_simp_rmap2 <- ms_simplify(del, keep = 0.001, keep_shapes = TRUE)
+```
+
+Voici une comparaison de généralisation avec différents paramètres et avec la fonction `st_simplify()` de `sf`
+```{r viewBothSimps}
+
+par(mfrow = c(1,4),
+    mar = c(0, 1, 3, 1),
+    xaxs='i', yaxs='i', 
+    bg = "#F1F3F5")
+
+plot(del$geom, col = "#5B89A3", border = "white")
+title("Géométries \ninitiales")
+
+plot(del_simp_sf$geom, col = "#5B89A3", border = "white")
+title("Simplification avec sf")
+
+plot(del_simp_rmap$geom, col = "#5B89A3", border = "white")
+title("Simplification avec \nrMapshaper")
+
+plot(del_simp_rmap2$geom, col = "#5B89A3", border = "white")
+title("Forte simplification \navec rMapshaper")
+
+```
+
+## Agréger des polygones en fonction d’une variable
+
+## Digitalisation
+
+La digitalisation est une étape utile de la manipulation de données spatiales mais n'est pas reproductible.
+
+Certains packages de R permettent de réaliser ces opérations mais ne sont pas les plus adaptés car certains  de 
+Digitalisation : proposer des choses et préciser que ce n’est pas reproductible et quil peut y avoir des problèmes de topologie et suilhy des outils plus adaptés à ça. Qgis 
+
+## Construction d'une grille régulière
+
+La fonction `st_male_grid()` permet la création d'une grille régulière sur l'emprise d'un objet géographique donné.
+
+Cette fonction renvoi un objet de type `sfc` constitué de listes de cellules. 
+Pour le manipuler facilement on le converti en objet `sf`  avec la fonction `st_sf()` et en ajoutant un champ d'identifiants. 
+
+```{r makeGrid}
+# Création de la grille
+grid <- st_make_grid(gou, cellsize = 35000)
+
+# Ajout d'un identifiant unique et passage en sf 
+grid <- st_sf(ID = 1:length(grid), geom = grid)
+
+head(grid)
+```
+
+```{r ViewGrid}
+par(mar = c(0, 0, 0, 0), xaxs='i', yaxs='i', bg = "#F1F3F5")
+plot(st_geometry(gou), col = "#5B89A3", border = "white", lwd = 1)
+plot(st_geometry(grid), col = NA, border = "black", lwd = 1, add = TRUE)
+```
+
+Il est possible de créer des grilles hexagonales avec l'argument `square = FALSE`      
+```{r gridHex}
+grid_hex <- st_make_grid(gou, cellsize = 35000, square = FALSE)
+
+# Ajout d'un identifiant unique et passage en sf 
+grid_hex <- st_sf(ID = 1:length(grid_hex), geom = grid_hex)
+
+# Cartographie
+par(mar = c(0, 0, 0, 0), xaxs='i', yaxs='i', bg = "#F1F3F5")
+plot(st_geometry(gou), col = "#5B89A3", border = "white", lwd = 1)
+plot(st_geometry(grid_hex), col = NA, border = "black", lwd = 1, add = TRUE)
+```
+
+Ou de récuperer le centroide de ces polygones avec l'argument `what = centers` ou les angles avec `what = corners`
+
+```{r gridCenters}
+par(mar = c(0, 0, 0, 0), xaxs='i', yaxs='i', bg = "#F1F3F5")
+
+plot(st_geometry(gou), col = "#5B89A3", border = "white", lwd = 1)
+
+# Les centres
+plot(st_make_grid(gou, cellsize = 35000, what = "centers"), col = "red", pch = 20, add = TRUE)
+
+# Les angles
+plot(st_make_grid(gou, cellsize = 35000, what = "corners"), col = "pink", pch = 3, add = TRUE)
+```
+
+### Intersecter la grille avec les points 
+
+Comme présenté dans la @sec-inter on peut intersecter des points dans des polygones et les compter. 
+
+```{r gridPoints}
+# Intersection
+inter <- st_intersects(grid, poi, sparse = TRUE) 
+
+# vérifier l'intersection
+length(inter) == nrow(grid)
+
+# Jointure des résultats dans la grille
+grid$nb_poi <- lengths(inter)
+
+head(grid)
+```
+
+On peut affiner cette grille en ne sélectionnant que les carreaux qui intersectent le fond de carte...
+
+```{r filterCells}
+grid_f <- st_filter(grid, gou, .predicate = st_intersects)
+```
+
+...et cartographier le résultat avec `mapsf`
+```{r mapGridInter}
+# intitialisation du fond de carte
+mf_map(x = grid_f, border = "white", lwd = 0.5)
+
+# cartographie du nombre de points en cercles proportionnels
+mf_map(x = grid_f,
+       var = "nb_poi",
+       type = "prop",
+       border = "white",
+       col = "#FF000080",
+       leg_title = "Nombre de points remarquables",
+       inches   = 0.4, leg_pos  = "topright")
+
+```
+
+## Conversion vecteur --> raster
+
+Le package `terra` permet la manipulation de données raster mais aussi de données vecteur pour certains traitements. 
+
+On peut convertir un objet vectoriel `sf` vers un objet vectoriel `terra` de format `spatVector` avec la fonction `vect()` de `terra` 
+
+```{r packageTerra}
+library(terra)
+
+grid_spatVect <- vect(grid)
+class(grid_spatVect)
+```
+
+
+On peut aussi convertir un objet vectoriel `sf` vers un objet raster `terra` de format `spatRast` pour cela voir le module de raster
+
+------------------------------------------------------------------------
+
+::: {.callout-note title="A propos de ce document"}
+Ce support a été créé pour la semaine de formation franco-tunisienne
+**GEO UNIV'R Tunisie 2024 - "Enseigner la statistique, la cartographie
+et l'analyse spatiale avec R** qui se tient à Sousse en mai 2024.
+:::
+
+#### Références {.unnumbered}
+
+::: {#refs}
+:::
+
+```{r sessionInfo}
+sessionInfo()
+```
